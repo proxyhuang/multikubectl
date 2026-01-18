@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/multikubectl/pkg/cluster"
+	"github.com/multikubectl/pkg/config"
 	"github.com/multikubectl/pkg/executor"
 	"github.com/multikubectl/pkg/output"
 	"github.com/spf13/cobra"
@@ -47,31 +48,49 @@ Examples:
 
 func init() {
 	rootCmd.Flags().StringVar(&kubeConfig, "kubeconfig", "", "Path to the kubeconfig file")
-	rootCmd.Flags().StringSliceVar(&contexts, "contexts", nil, "Comma-separated list of contexts to use")
-	rootCmd.Flags().BoolVar(&allContexts, "all-contexts", true, "Use all available contexts (default)")
+	rootCmd.Flags().StringSliceVar(&contexts, "contexts", nil, "Comma-separated list of contexts to use (overrides config)")
+	rootCmd.Flags().BoolVar(&allContexts, "all-contexts", false, "Use all available contexts (ignores config)")
 	rootCmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second, "Timeout for kubectl commands")
 
 	// Allow unknown flags to pass through to kubectl
 	rootCmd.FParseErrWhitelist.UnknownFlags = true
+
+	// Add config subcommand
+	rootCmd.AddCommand(configCmd)
 }
 
 func Execute() {
-	// Separate our flags from kubectl flags
 	args := os.Args[1:]
+
+	// Check if first arg is a subcommand (like "config") or help
+	if len(args) > 0 {
+		switch args[0] {
+		case "config", "help", "completion", "--help", "-h":
+			// Let cobra handle subcommands normally
+			if err := rootCmd.Execute(); err != nil {
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	// For kubectl passthrough commands, handle manually
+	if len(args) == 0 {
+		rootCmd.Help()
+		return
+	}
+
+	// Separate our flags from kubectl flags
 	ourArgs, kubectlArgs := separateArgs(args)
 
-	// Parse our flags
+	// Parse our flags manually
 	if err := rootCmd.ParseFlags(ourArgs); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Store kubectl args for later use
-	rootCmd.SetArgs(kubectlArgs)
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	// Call runMultiKubectl directly with kubectl args
+	runMultiKubectl(rootCmd, kubectlArgs)
 }
 
 // separateArgs separates multikubectl-specific flags from kubectl flags
@@ -125,8 +144,33 @@ func runMultiKubectl(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Get contexts to use
-	targetContexts := mgr.FilterContexts(contexts)
+	// Determine which contexts to use
+	// Priority: 1. --contexts flag  2. --all-contexts flag  3. ~/.multikube/config  4. all contexts
+	var targetContexts []string
+
+	if len(contexts) > 0 {
+		// Command line --contexts takes highest priority
+		targetContexts = mgr.FilterContexts(contexts)
+	} else if allContexts {
+		// --all-contexts flag ignores config file
+		targetContexts = mgr.GetContexts()
+	} else if config.Exists() {
+		// Use ~/.multikube/config if it exists
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading multikube config: %v\n", err)
+			os.Exit(1)
+		}
+		if len(cfg.Contexts) > 0 {
+			targetContexts = mgr.FilterContexts(cfg.Contexts)
+		} else {
+			targetContexts = mgr.GetContexts()
+		}
+	} else {
+		// Default: use all contexts
+		targetContexts = mgr.GetContexts()
+	}
+
 	if len(targetContexts) == 0 {
 		fmt.Fprintln(os.Stderr, "No valid contexts found")
 		os.Exit(1)

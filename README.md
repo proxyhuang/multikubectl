@@ -9,6 +9,7 @@ A multi-cluster version of kubectl that allows you to run kubectl commands acros
 - **CLUSTER column**: Adds a CLUSTER column to table outputs, showing which cluster each resource belongs to
 - **Full kubectl compatibility**: Supports all kubectl commands, flags, and arguments
 - **Flexible context selection**: Use all contexts, or specify a subset of clusters to query
+- **Persistent configuration**: Save your preferred cluster selection to `~/.multikube/config`
 - **Smart output merging**: Table outputs are merged with unified headers; non-table outputs (logs, describe) are displayed per-cluster
 
 ## Installation
@@ -38,8 +39,8 @@ multikubectl [flags] [kubectl command] [kubectl flags]
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--kubeconfig` | Path to the kubeconfig file | `~/.kube/config` or `$KUBECONFIG` |
-| `--contexts` | Comma-separated list of contexts to use | All contexts |
-| `--all-contexts` | Use all available contexts | `true` |
+| `--contexts` | Comma-separated list of contexts to use (overrides config) | From config or all |
+| `--all-contexts` | Use all available contexts (ignores config) | `false` |
 | `--timeout` | Timeout for kubectl commands | `30s` |
 
 ### Examples
@@ -154,6 +155,96 @@ Commands that produce non-table output will be grouped by cluster:
 - `cp`
 
 ## Configuration
+
+### Persistent Context Configuration
+
+multikubectl supports saving your preferred cluster selection to `~/.multikube/config`. When this file exists, multikubectl will only query the configured contexts by default.
+
+#### Config Commands
+
+```bash
+# Interactive multi-select (recommended)
+multikubectl config select
+
+# List all available contexts (shows which are configured with *)
+multikubectl config list
+
+# Set contexts to use (replaces existing config)
+multikubectl config use production,staging
+
+# Add context(s) to config
+multikubectl config add development
+
+# Remove context(s) from config
+multikubectl config remove development
+
+# Show current configuration
+multikubectl config show
+
+# Clear configuration (revert to using all contexts)
+multikubectl config clear
+```
+
+#### Interactive Selection
+
+The `config select` command provides an interactive multi-select interface:
+
+```
+$ multikubectl config select
+? Select contexts to use (space to select, enter to confirm):
+  [x] production
+  [ ] staging
+> [x] development
+  [ ] testing
+```
+
+- Use **arrow keys** to navigate
+- Press **space** to select/deselect
+- Press **enter** to confirm
+- Previously configured contexts are pre-selected
+
+#### Example Workflow
+
+```bash
+# First, see all available contexts
+$ multikubectl config list
+Available contexts from kubeconfig:
+
+  production (current)
+  staging
+  development
+  testing
+
+No multikube config found. Using all contexts.
+Run 'multikubectl config use <contexts>' to configure specific contexts.
+
+# Configure to only use production and staging
+$ multikubectl config use production,staging
+Configured contexts:
+  - production
+  - staging
+
+Configuration saved to /home/user/.multikube/config
+
+# Now commands will only query these clusters
+$ multikubectl get pods
+CLUSTER      NAME                    READY   STATUS    RESTARTS   AGE
+production   nginx-abc123            1/1     Running   0          10d
+staging      nginx-xyz789            1/1     Running   0          5d
+
+# Override config temporarily with --contexts flag
+$ multikubectl --contexts=development get pods
+
+# Or query all clusters with --all-contexts
+$ multikubectl --all-contexts get pods
+```
+
+#### Context Resolution Priority
+
+1. `--contexts` flag (highest priority)
+2. `--all-contexts` flag
+3. `~/.multikube/config` file
+4. All contexts from kubeconfig (default)
 
 ### Environment Variables
 
